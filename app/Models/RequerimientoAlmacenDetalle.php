@@ -77,8 +77,7 @@ class RequerimientoAlmacenDetalle extends Model
                     	COUNT(atf.id)
                     FROM activo_fijo atf 
                     WHERE 
-                    	atf.id_producto = pr.id AND
-                    	atf.id_almacen = alm.id
+                    	atf.id_producto = pr.id
                 )
                 -- para todos los demas productos
                 ELSE (
