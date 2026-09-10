@@ -98,7 +98,7 @@ class ControlConsumoData
         LEFT JOIN labor lb ON lb.id = c.id_labor_destino
         LEFT JOIN lote_producto lp ON lp.id = entd.id_lote_producto
         LEFT JOIN orden_compra_detalle ocd ON ocd.id = lp.id_orden_compra_detalle
-        WHERE 1=1
+        WHERE rq.estado != "Anulado"
         ';
 
         $params = [];
