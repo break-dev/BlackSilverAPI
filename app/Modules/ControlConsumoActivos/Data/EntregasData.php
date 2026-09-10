@@ -181,6 +181,7 @@ class EntregasData
         LEFT JOIN marca mr_af ON mr_af.id = af_entrega.id_marca
 
         WHERE
+            rq.estado != "Anulado" AND
             -- filtro por periodo
             MONTH(rq.created_at) = :mes AND
             YEAR(rq.created_at) = :yearcito
