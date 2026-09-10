@@ -6,9 +6,15 @@ use Illuminate\Support\Facades\DB;
 
 class LugarExtraccionCarbonData
 {
+    // ====================================================================
+    // JOIN: lugares asociados a un proveedor (a traves de lugar_extraccion_proveedor)
+    // ====================================================================
+
     /**
-     * Lista los lugares de extraccion activos de un proveedor, con nombre
-     * de departamento / provincia / distrito para evitar joins en el front.
+     * Lista los lugares de extraccion ACTIVOS de un proveedor, con nombres
+     * de departamento / provincia / distrito. La asociacion vive en
+     * `lugar_extraccion_proveedor`; el catalogo del sitio vive en
+     * `lugar_extraccion_carbon`.
      * @return array<object>
      */
     public static function get_por_proveedor(int $id_proveedor): array
@@ -16,7 +22,6 @@ class LugarExtraccionCarbonData
         $sql = '
             SELECT
                 le.id AS id_lugar_extraccion,
-                le.id_proveedor,
                 le.id_departamento,
                 d.nombre AS departamento_nombre,
                 le.id_provincia,
@@ -24,13 +29,15 @@ class LugarExtraccionCarbonData
                 le.id_distrito,
                 di.nombre AS distrito_nombre,
                 le.direccion
-            FROM lugar_extraccion_carbon le
-            INNER JOIN departamento d ON d.id = le.id_departamento
-            INNER JOIN provincia p ON p.id = le.id_provincia
-            INNER JOIN distrito di ON di.id = le.id_distrito
-            WHERE le.id_proveedor = :id_proveedor
-              AND le.estado = "Activo"
-            ORDER BY d.nombre ASC, p.nombre ASC, di.nombre ASC
+            FROM lugar_extraccion_proveedor lp
+            INNER JOIN lugar_extraccion_carbon le
+                ON le.id = lp.id_lugar_extraccion_carbon
+            LEFT JOIN departamento d ON d.id = le.id_departamento
+            LEFT JOIN provincia p ON p.id = le.id_provincia
+            LEFT JOIN distrito di ON di.id = le.id_distrito
+            WHERE lp.id_proveedor = :id_proveedor
+              AND IFNULL(le.estado, "Activo") = "Activo"
+            ORDER BY le.direccion ASC
         ';
         return DB::select($sql, ['id_proveedor' => $id_proveedor]);
     }
@@ -59,8 +66,8 @@ class LugarExtraccionCarbonData
 
         $sql = "
             SELECT
+                lp.id_proveedor,
                 le.id AS id_lugar_extraccion,
-                le.id_proveedor,
                 le.id_departamento,
                 d.nombre AS departamento_nombre,
                 le.id_provincia,
@@ -68,35 +75,79 @@ class LugarExtraccionCarbonData
                 le.id_distrito,
                 di.nombre AS distrito_nombre,
                 le.direccion
-            FROM lugar_extraccion_carbon le
-            INNER JOIN departamento d ON d.id = le.id_departamento
-            INNER JOIN provincia p ON p.id = le.id_provincia
-            INNER JOIN distrito di ON di.id = le.id_distrito
-            WHERE le.id_proveedor IN ($inClause)
-              AND le.estado = 'Activo'
-            ORDER BY le.id_proveedor, d.nombre ASC, p.nombre ASC, di.nombre ASC
+            FROM lugar_extraccion_proveedor lp
+            INNER JOIN lugar_extraccion_carbon le
+                ON le.id = lp.id_lugar_extraccion_carbon
+            LEFT JOIN departamento d ON d.id = le.id_departamento
+            LEFT JOIN provincia p ON p.id = le.id_provincia
+            LEFT JOIN distrito di ON di.id = le.id_distrito
+            WHERE lp.id_proveedor IN ($inClause)
+              AND IFNULL(le.estado, 'Activo') = 'Activo'
+            ORDER BY lp.id_proveedor, le.direccion ASC
         ";
         return DB::select($sql, $params);
     }
 
     /**
-     * Inserta un nuevo lugar de extraccion para un proveedor y devuelve el id generado.
+     * Reemplaza el set de lugares asociados a un proveedor. Espera una lista
+     * de IDs del catalogo `lugar_extraccion_carbon` y los persiste en la tabla
+     * puente `lugar_extraccion_proveedor` (UNIQUE(id_proveedor, id_lugar_extraccion_carbon)
+     * garantiza idempotencia).
+     *
+     * @param int[] $ids_lugar_extraccion_carbon
      */
-    public static function insertar(
-        int $id_proveedor,
-        int $id_departamento,
-        int $id_provincia,
-        int $id_distrito,
-        string $direccion,
-    ): int {
-        return DB::table('lugar_extraccion_carbon')->insertGetId([
-            'id_proveedor' => $id_proveedor,
-            'id_departamento' => $id_departamento,
-            'id_provincia' => $id_provincia,
-            'id_distrito' => $id_distrito,
-            'direccion' => trim($direccion),
-            'estado' => 'Activo',
-        ]);
+    public static function set_para_proveedor(int $id_proveedor, array $ids_lugar_extraccion_carbon): void
+    {
+        DB::transaction(function () use ($id_proveedor, $ids_lugar_extraccion_carbon) {
+            DB::table('lugar_extraccion_proveedor')
+                ->where('id_proveedor', $id_proveedor)
+                ->delete();
+
+            $filas = [];
+            foreach ($ids_lugar_extraccion_carbon as $id) {
+                $idInt = (int) $id;
+                if ($idInt <= 0) {
+                    continue;
+                }
+                // INSERT IGNORE para no chocar con UNIQUE si llegan duplicados.
+                DB::table('lugar_extraccion_proveedor')->insertOrIgnore([
+                    'id_proveedor' => $id_proveedor,
+                    'id_lugar_extraccion_carbon' => $idInt,
+                ]);
+            }
+        });
+    }
+
+    // ====================================================================
+    // CATALOGO: lugares_extraccion_carbon (sin proveedor)
+    // ====================================================================
+
+    /**
+     * Lista el catalogo completo (activos). Pensado para alimentar el Select
+     * de "Lugares de extraccion" en cualquier flujo (registro/edicion de
+     * proveedor de carbon, formularios de compra, etc).
+     */
+    public static function get_catalogo(): array
+    {
+        $sql = '
+            SELECT
+                le.id AS id_lugar_extraccion,
+                le.id_departamento,
+                d.nombre AS departamento_nombre,
+                le.id_provincia,
+                p.nombre AS provincia_nombre,
+                le.id_distrito,
+                di.nombre AS distrito_nombre,
+                le.direccion,
+                le.estado
+            FROM lugar_extraccion_carbon le
+            LEFT JOIN departamento d ON d.id = le.id_departamento
+            LEFT JOIN provincia p ON p.id = le.id_provincia
+            LEFT JOIN distrito di ON di.id = le.id_distrito
+            WHERE IFNULL(le.estado, "Activo") = "Activo"
+            ORDER BY le.direccion ASC
+        ';
+        return DB::select($sql);
     }
 
     /**
@@ -107,7 +158,6 @@ class LugarExtraccionCarbonData
         $sql = '
             SELECT
                 le.id AS id_lugar_extraccion,
-                le.id_proveedor,
                 le.id_departamento,
                 d.nombre AS departamento_nombre,
                 le.id_provincia,
@@ -117,9 +167,9 @@ class LugarExtraccionCarbonData
                 le.direccion,
                 le.estado
             FROM lugar_extraccion_carbon le
-            INNER JOIN departamento d ON d.id = le.id_departamento
-            INNER JOIN provincia p ON p.id = le.id_provincia
-            INNER JOIN distrito di ON di.id = le.id_distrito
+            LEFT JOIN departamento d ON d.id = le.id_departamento
+            LEFT JOIN provincia p ON p.id = le.id_provincia
+            LEFT JOIN distrito di ON di.id = le.id_distrito
             WHERE le.id = :id
             LIMIT 1
         ';
@@ -127,39 +177,54 @@ class LugarExtraccionCarbonData
     }
 
     /**
-     * Reemplaza todos los lugares de extraccion de un proveedor.
-     * Marca los anteriores como Inactivo e inserta los nuevos en estado Activo.
-     * @param int $id_proveedor
-     * @param array<int, array{id_departamento:int, id_provincia:int, id_distrito:int, direccion:string|null}> $lugares
+     * Inserta un nuevo sitio en el catalogo. Direccion es obligatoria; los
+     * ids de ubigeo son opcionales.
      */
-    public static function set_para_proveedor(int $id_proveedor, array $lugares): void
-    {
-        DB::transaction(function () use ($id_proveedor, $lugares) {
-            DB::table('lugar_extraccion_carbon')
-                ->where('id_proveedor', $id_proveedor)
-                ->update(['estado' => 'Inactivo']);
+    public static function insertar_catalogo(
+        ?int $id_departamento,
+        ?int $id_provincia,
+        ?int $id_distrito,
+        string $direccion
+    ): int {
+        return DB::table('lugar_extraccion_carbon')->insertGetId([
+            'id_departamento' => $id_departamento && $id_departamento > 0 ? $id_departamento : null,
+            'id_provincia' => $id_provincia && $id_provincia > 0 ? $id_provincia : null,
+            'id_distrito' => $id_distrito && $id_distrito > 0 ? $id_distrito : null,
+            'direccion' => trim($direccion),
+            'estado' => 'Activo',
+        ]);
+    }
 
-            $filas = [];
-            foreach ($lugares as $l) {
-                $idDep = (int) ($l['id_departamento'] ?? 0);
-                $idProv = (int) ($l['id_provincia'] ?? 0);
-                $idDist = (int) ($l['id_distrito'] ?? 0);
-                $dir = trim((string) ($l['direccion'] ?? ''));
-                if ($idDep <= 0 || $idProv <= 0 || $idDist <= 0 || $dir === '') {
-                    continue;
-                }
-                $filas[] = [
-                    'id_proveedor' => $id_proveedor,
-                    'id_departamento' => $idDep,
-                    'id_provincia' => $idProv,
-                    'id_distrito' => $idDist,
-                    'direccion' => $dir,
-                    'estado' => 'Activo',
-                ];
-            }
-            if (!empty($filas)) {
-                DB::table('lugar_extraccion_carbon')->insert($filas);
-            }
-        });
+    /**
+     * Actualiza un sitio del catalogo. Direccion es obligatoria; los ids de
+     * ubigeo son opcionales.
+     */
+    public static function actualizar_catalogo(
+        int $id_lugar_extraccion,
+        ?int $id_departamento,
+        ?int $id_provincia,
+        ?int $id_distrito,
+        string $direccion
+    ): int {
+        return DB::table('lugar_extraccion_carbon')
+            ->where('id', $id_lugar_extraccion)
+            ->update([
+                'id_departamento' => $id_departamento && $id_departamento > 0 ? $id_departamento : null,
+                'id_provincia' => $id_provincia && $id_provincia > 0 ? $id_provincia : null,
+                'id_distrito' => $id_distrito && $id_distrito > 0 ? $id_distrito : null,
+                'direccion' => trim($direccion),
+            ]);
+    }
+
+    /**
+     * Desactivar (soft delete) un sitio del catalogo. Si tiene asociaciones
+     * activas en `lugar_extraccion_proveedor`, estas siguen existiendo pero
+     * el join en get_por_proveedor las filtra por estado=Activo.
+     */
+    public static function eliminar_catalogo(int $id_lugar_extraccion): int
+    {
+        return DB::table('lugar_extraccion_carbon')
+            ->where('id', $id_lugar_extraccion)
+            ->update(['estado' => 'Inactivo']);
     }
 }

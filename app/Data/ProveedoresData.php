@@ -110,6 +110,8 @@ class ProveedoresData
         ?string $telefono = null,
         ?string $correo = null,
         bool $paraCarbon = false,
+        ?string $codigoReinfo = null,
+        ?string $contratosJson = null,
     ): int {
         return Proveedor::insertGetId([
             'tipo_entidad' => $tipoEntidad->value,
@@ -122,6 +124,8 @@ class ProveedoresData
             'para_mantenimiento' => $paraMantenimiento,
             'para_transporte' => $paraTransporte,
             'para_carbon' => $paraCarbon,
+            'codigo_reinfo' => $paraCarbon ? $codigoReinfo : null,
+            'contratos' => $paraCarbon ? $contratosJson : null,
             'estado' => 'Activo'
         ]);
     }

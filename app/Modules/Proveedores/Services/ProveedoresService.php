@@ -43,6 +43,10 @@ class ProveedoresService
      * - numero_cuenta (string)
      * - cci (string|null)
      * - es_para_detraccion (int)
+     * @param array $contratos Listado de archivos del contrato (opcional).
+     * Cada item: { url, path_relativo, nombre_original|null, extension|null }.
+     * Solo se persisten cuando paraCarbon=true; si el array viene vacio y
+     * el proveedor no es de carbon, el global service no escribe nada.
      */
     public static function crear_proveedor(
         TipoEntidad $tipoEntidad,
@@ -55,9 +59,11 @@ class ProveedoresService
         ?string $telefono = null,
         ?string $correo = null,
         bool $paraCarbon = false,
+        ?string $codigoReinfo = null,
+        array $contratos = [],
         array $cuentas = []
     ): array {
-        return DB::transaction(function () use ($tipoEntidad, $dni, $ruc, $razonSocial, $paraMantenimiento, $paraTransporte, $direccion, $telefono, $correo, $paraCarbon, $cuentas) {
+        return DB::transaction(function () use ($tipoEntidad, $dni, $ruc, $razonSocial, $paraMantenimiento, $paraTransporte, $direccion, $telefono, $correo, $paraCarbon, $codigoReinfo, $contratos, $cuentas) {
             $response = ProveedoresServiceGlobal::crear_proveedor(
                 tipoEntidad: $tipoEntidad,
                 dni: $dni,
@@ -69,6 +75,8 @@ class ProveedoresService
                 telefono: $telefono,
                 correo: $correo,
                 paraCarbon: $paraCarbon,
+                codigoReinfo: $codigoReinfo,
+                contratos: $contratos,
             );
 
             // Si hubo un error, lo devolvemos
@@ -102,6 +110,15 @@ class ProveedoresService
      * preserva. En el formulario de carbón tampoco se muestran
      * `para_mantenimiento` / `para_transporte`, así que el frontend reenvía los
      * valores actuales para no borrarlos.
+     *
+     * `codigoReinfo` y `contratos` SOLO se persisten cuando el proveedor ya
+     * es de carbon (`para_carbon=1`). Para proveedores logísticos, aunque
+     * lleguen en el payload, el data layer los ignora (defensa: nadie deberia
+     * poder "contaminar" un proveedor logistico con campos exclusivos de
+     * carbon).
+     *
+     * @param array $contratos Listado de archivos del contrato: cada item
+     *   { url, path_relativo, nombre_original|null, extension|null }.
      */
     public static function actualizar_proveedor(
         int $id_proveedor,
@@ -114,6 +131,8 @@ class ProveedoresService
         ?string $correo = null,
         bool $paraMantenimiento = false,
         bool $paraTransporte = false,
+        ?string $codigoReinfo = null,
+        array $contratos = [],
         ?int $idEmpleado = null,
         ?string $nombreEmpleado = null
     ): array {
@@ -146,6 +165,8 @@ class ProveedoresService
             correo: $correo,
             para_mantenimiento: $paraMantenimiento,
             para_transporte: $paraTransporte,
+            codigo_reinfo: $codigoReinfo,
+            contratos: $contratos,
             id_empleado: $idEmpleado,
             nombre_empleado: $nombreEmpleado,
         );

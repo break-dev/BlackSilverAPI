@@ -32,7 +32,12 @@ class ProveedoresService
     }
 
     /**
-     * Registrar proveedor
+     * Registrar proveedor.
+     *
+     * `codigoReinfo` y `contratos` solo se persisten cuando `paraCarbon=true`.
+     * Para proveedores logisticos se ignoran silenciosamente (defensa).
+     *
+     * @param array $contratos Listado de archivos del contrato (IArchivo[]).
      */
     public static function crear_proveedor(
         TipoEntidad $tipoEntidad,
@@ -45,6 +50,8 @@ class ProveedoresService
         ?string $telefono = null,
         ?string $correo = null,
         bool $paraCarbon = false,
+        ?string $codigoReinfo = null,
+        array $contratos = [],
         ?bool $return_object = false
     ): array {
         // verificamos que no exista
@@ -52,6 +59,13 @@ class ProveedoresService
         if ($ya_existe) {
             return ApiResponse::error("El proveedor ya existe");
         }
+
+        $codigoReinfoPersisted = $paraCarbon
+            ? ($codigoReinfo === '' ? null : $codigoReinfo)
+            : null;
+        $contratosJson = ($paraCarbon && !empty($contratos))
+            ? json_encode($contratos, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            : null;
 
         $id = ProveedoresData::crear_proveedor(
             tipoEntidad: $tipoEntidad,
@@ -64,6 +78,8 @@ class ProveedoresService
             telefono: $telefono,
             correo: $correo,
             paraCarbon: $paraCarbon,
+            codigoReinfo: $codigoReinfoPersisted,
+            contratosJson: $contratosJson,
         );
 
         if ($return_object) {

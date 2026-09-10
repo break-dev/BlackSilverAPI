@@ -10,6 +10,10 @@ use Illuminate\Support\Facades\Validator;
 
 class LugarExtraccionCarbonController
 {
+    // ====================================================================
+    // JOIN: lugares por proveedor.
+    // ====================================================================
+
     public function get_por_proveedor(int $id_proveedor): JsonResponse
     {
         return response()->json(
@@ -18,59 +22,57 @@ class LugarExtraccionCarbonController
     }
 
     /**
-     * Body esperado:
-     *   { lugares: [ { id_departamento, id_provincia, id_distrito, direccion }, ... ] }
+     * Body esperado: { lugares: [id_lugar_extraccion_carbon, ...] }
      */
     public function set_para_proveedor(Request $request, int $id_proveedor): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'lugares' => 'present|array',
-            'lugares.*.id_departamento' => 'required_with:lugares|integer|min:1',
-            'lugares.*.id_provincia' => 'required_with:lugares|integer|min:1',
-            'lugares.*.id_distrito' => 'required_with:lugares|integer|min:1',
-            'lugares.*.direccion' => 'required_with:lugares|string|max:255',
+            'lugares.*' => 'integer|min:1',
         ], [
-            'lugares.*.id_departamento.required_with' => 'Selecciona un departamento',
-            'lugares.*.id_provincia.required_with' => 'Selecciona una provincia',
-            'lugares.*.id_distrito.required_with' => 'Selecciona un distrito',
-            'lugares.*.direccion.required_with' => 'La direccion es obligatoria',
+            'lugares.present' => 'El campo lugares es requerido',
+            'lugares.array' => 'lugares debe ser un arreglo',
+            'lugares.*.integer' => 'Cada id de lugar debe ser entero',
+            'lugares.*.min' => 'Cada id de lugar debe ser mayor a 0',
         ]);
 
         if ($validator->fails()) {
             return response()->json(ApiResponse::error($validator->errors()->first()), 422);
         }
 
-        $lugares = array_map(
-            fn(array $l) => [
-                'id_departamento' => (int) $l['id_departamento'],
-                'id_provincia' => (int) $l['id_provincia'],
-                'id_distrito' => (int) $l['id_distrito'],
-                'direccion' => trim((string) $l['direccion']),
-            ],
-            (array) $request->input('lugares', []),
-        );
+        $ids = array_map('intval', (array) $request->input('lugares', []));
 
         return response()->json(
-            LugarExtraccionCarbonService::set_para_proveedor($id_proveedor, $lugares)
+            LugarExtraccionCarbonService::set_para_proveedor($id_proveedor, $ids)
         );
     }
 
+    // ====================================================================
+    // CATALOGO: CRUD sobre lugar_extraccion_carbon.
+    // ====================================================================
+
+    public function get_catalogo(): JsonResponse
+    {
+        return response()->json(LugarExtraccionCarbonService::get_catalogo());
+    }
+
+    public function get_item(int $id_lugar_extraccion): JsonResponse
+    {
+        return response()->json(LugarExtraccionCarbonService::get_item($id_lugar_extraccion));
+    }
+
     /**
-     * Crea un nuevo lugar de extraccion individual para el proveedor sin
-     * tocar los existentes. Pensado para el boton "+" del formulario de
-     * Compra de Carbon.
+     * Body esperado: { id_departamento?, id_provincia?, id_distrito?, direccion }.
+     * direccion obligatorio; los ids de ubigeo son opcionales.
      */
-    public function agregar_a_proveedor(Request $request, int $id_proveedor): JsonResponse
+    public function crear_item(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'id_departamento' => 'required|integer|min:1',
-            'id_provincia' => 'required|integer|min:1',
-            'id_distrito' => 'required|integer|min:1',
+            'id_departamento' => 'nullable|integer|min:1',
+            'id_provincia' => 'nullable|integer|min:1',
+            'id_distrito' => 'nullable|integer|min:1',
             'direccion' => 'required|string|max:255',
         ], [
-            'id_departamento.required' => 'Departamento requerido',
-            'id_provincia.required' => 'Provincia requerida',
-            'id_distrito.required' => 'Distrito requerido',
             'direccion.required' => 'La direccion es obligatoria',
         ]);
 
@@ -78,12 +80,40 @@ class LugarExtraccionCarbonController
             return response()->json(ApiResponse::error($validator->errors()->first()), 422);
         }
 
-        return response()->json(LugarExtraccionCarbonService::insertar(
-            $id_proveedor,
-            (int) $request->input('id_departamento'),
-            (int) $request->input('id_provincia'),
-            (int) $request->input('id_distrito'),
+        return response()->json(LugarExtraccionCarbonService::insertar_item(
+            $request->input('id_departamento') !== null ? (int) $request->input('id_departamento') : null,
+            $request->input('id_provincia') !== null ? (int) $request->input('id_provincia') : null,
+            $request->input('id_distrito') !== null ? (int) $request->input('id_distrito') : null,
             (string) $request->input('direccion'),
         ));
+    }
+
+    public function actualizar_item(Request $request, int $id_lugar_extraccion): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'id_departamento' => 'nullable|integer|min:1',
+            'id_provincia' => 'nullable|integer|min:1',
+            'id_distrito' => 'nullable|integer|min:1',
+            'direccion' => 'required|string|max:255',
+        ], [
+            'direccion.required' => 'La direccion es obligatoria',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(ApiResponse::error($validator->errors()->first()), 422);
+        }
+
+        return response()->json(LugarExtraccionCarbonService::actualizar_item(
+            $id_lugar_extraccion,
+            $request->input('id_departamento') !== null ? (int) $request->input('id_departamento') : null,
+            $request->input('id_provincia') !== null ? (int) $request->input('id_provincia') : null,
+            $request->input('id_distrito') !== null ? (int) $request->input('id_distrito') : null,
+            (string) $request->input('direccion'),
+        ));
+    }
+
+    public function eliminar_item(int $id_lugar_extraccion): JsonResponse
+    {
+        return response()->json(LugarExtraccionCarbonService::eliminar_item($id_lugar_extraccion));
     }
 }

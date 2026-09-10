@@ -34,6 +34,8 @@ class ProveedoresData
             pr.direccion,
             pr.telefono,
             pr.correo,
+            pr.codigo_reinfo,
+            pr.contratos,
             pr.cambios_log,
             pr.estado,
             (
@@ -57,10 +59,12 @@ class ProveedoresData
                 SELECT
                     COUNT(*)
                 FROM
-                    lugar_extraccion_carbon le
+                    lugar_extraccion_proveedor lp
+                INNER JOIN lugar_extraccion_carbon le
+                    ON le.id = lp.id_lugar_extraccion_carbon
                 WHERE
-                    le.id_proveedor = pr.id AND
-                    le.estado = "Activo"
+                    lp.id_proveedor = pr.id AND
+                    IFNULL(le.estado, "Activo") = "Activo"
             ) as cantidad_lugares_extraccion
         FROM
             proveedor pr
@@ -71,7 +75,8 @@ class ProveedoresData
         if ($id_proveedor) {
             $sql .= ' AND pr.id = :id_proveedor';
             $params['id_proveedor'] = $id_proveedor;
-            return DB::selectOne($sql, $params);
+            $row = DB::selectOne($sql, $params);
+            return self::hidratarProveedor($row);
         }
 
         if ($paraCarbon !== null) {
@@ -85,12 +90,48 @@ class ProveedoresData
         $params['estado_inactivo'] = EstadoBase::Inactivo->value;
 
         $sql .= ' ORDER BY pr.razon_social ASC;';
-        return DB::select($sql, $params);
+        $rows = DB::select($sql, $params);
+        return array_map(fn($r) => self::hidratarProveedor($r), $rows);
     }
 
     public static function get_proveedor_by_id(int $id_proveedor)
     {
         return self::get_proveedores(id_proveedor: $id_proveedor);
+    }
+
+    /**
+     * Decodifica `contratos` (JSON) a array asociativo. Si la columna viene
+     * NULL, malformada o el proveedor no es de carbon, devuelve array vacio
+     * (asi el front siempre recibe un array iterable).
+     */
+    private static function hidratarContratos(mixed $raw): array
+    {
+        if ($raw === null || $raw === '') {
+            return [];
+        }
+        if (is_array($raw)) {
+            return $raw;
+        }
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            return is_array($decoded) ? $decoded : [];
+        }
+        return [];
+    }
+
+    /**
+     * Hidrata un proveedor devuelto por SQL: decodifica `contratos` a array.
+     * Para proveedores no-carbon el array queda vacio aunque la columna
+     * tuviera basura (defensa: nunca exponemos contratos en logistica).
+     */
+    private static function hidratarProveedor(?object $row): ?object
+    {
+        if (!$row) {
+            return $row;
+        }
+        $esCarbon = isset($row->para_carbon) && (int) $row->para_carbon === 1;
+        $row->contratos = $esCarbon ? self::hidratarContratos($row->contratos ?? null) : [];
+        return $row;
     }
 
     /**
@@ -105,6 +146,8 @@ class ProveedoresData
         'direccion' => 'Dirección',
         'telefono' => 'Teléfono',
         'correo' => 'Correo',
+        'codigo_reinfo' => 'Código REINFO',
+        'contratos' => 'Archivos del Contrato',
         'para_mantenimiento' => 'Para Mantenimiento',
         'para_transporte' => 'Para Transporte',
         'para_carbon' => 'Para Carbón',
@@ -114,6 +157,9 @@ class ProveedoresData
      * Tipo PHP esperado por cada campo. Se usa SOLO para la normalización del
      * diff, de modo que `false !== 0` (bool vs tinyint de MySQL) no genere
      * falsos positivos en el historial.
+     *
+     * `contratos` se persiste como JSON (string), asi que diff por igualdad
+     * de string evita ruido de orden/reordenamiento en el JSON.
      */
     private const PROVEEDOR_CAMBIOS_TIPOS = [
         'tipo_entidad' => 'string',
@@ -123,6 +169,8 @@ class ProveedoresData
         'direccion' => 'string',
         'telefono' => 'string',
         'correo' => 'string',
+        'codigo_reinfo' => 'string',
+        'contratos' => 'string',
         'para_mantenimiento' => 'bool',
         'para_transporte' => 'bool',
         'para_carbon' => 'bool',
@@ -150,8 +198,14 @@ class ProveedoresData
      *
      * `para_carbon` NO se recibe: define en qué pestaña vive el proveedor y no
      * se edita desde este flujo, así que se preserva tal cual está en BD.
+     *
+     * `codigo_reinfo` y `contratos` solo se persisten cuando el proveedor ya
+     * tiene `para_carbon=1`. Para proveedores logisticos se ignoran (defensa).
+     *
      * Si recibe id_empleado + nombre_empleado, calcula el diff y lo apendea a
      * cambios_log (JSON).
+     *
+     * @param array $contratos Listado de archivos del contrato (IArchivo[]).
      */
     public static function actualizar_proveedor(
         int $id_proveedor,
@@ -164,9 +218,16 @@ class ProveedoresData
         ?string $correo = null,
         bool $para_mantenimiento = false,
         bool $para_transporte = false,
+        ?string $codigo_reinfo = null,
+        array $contratos = [],
         ?int $id_empleado = null,
         ?string $nombre_empleado = null
     ): int {
+        // Determinar si el proveedor YA es de carbon. Si no, descartar los
+        // campos exclusivos de carbon para que nadie pueda contaminarlos.
+        $actual = self::get_proveedores(id_proveedor: $id_proveedor);
+        $esCarbon = $actual !== null && (int) ($actual->para_carbon ?? 0) === 1;
+
         $nuevoEstado = [
             'tipo_entidad' => $tipo_entidad,
             'dni' => $dni,
@@ -178,6 +239,13 @@ class ProveedoresData
             'para_mantenimiento' => $para_mantenimiento ? 1 : 0,
             'para_transporte' => $para_transporte ? 1 : 0,
         ];
+
+        if ($esCarbon) {
+            $nuevoEstado['codigo_reinfo'] = ($codigo_reinfo === '' ? null : $codigo_reinfo);
+            $nuevoEstado['contratos'] = empty($contratos)
+                ? null
+                : json_encode($contratos, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }
 
         $cambiosLog = null;
         if ($id_empleado !== null && $nombre_empleado !== null) {
